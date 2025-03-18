@@ -121,24 +121,33 @@ def calculate_phase_value(phase):
     if not st.session_state.inputs["includeRDCosts"]:
         return npv_adjusted
 
-    # Subtract cumulative costs up to this phase
+    # Subtract cumulative costs up to this phase INCLUDING the current phase
     cumulative_costs = 0
     costs = st.session_state.inputs["costs"]
 
-    # Calculate remaining costs based on current phase
+    # Calculate costs up to and including current phase
     if phase == "preclinical":
-        # No previous costs
-        pass
+        cumulative_costs += costs["preclinical"]  # Include current phase cost
     elif phase == "phase1":
-        cumulative_costs += costs["preclinical"]
+        cumulative_costs += (
+            costs["preclinical"] + costs["phase1"]
+        )  # Include current phase cost
     elif phase == "phase2":
-        cumulative_costs += costs["preclinical"] + costs["phase1"]
+        cumulative_costs += (
+            costs["preclinical"] + costs["phase1"] + costs["phase2"]
+        )  # Include current phase cost
     elif phase == "phase3":
-        cumulative_costs += costs["preclinical"] + costs["phase1"] + costs["phase2"]
-    elif phase == "registration":
         cumulative_costs += (
             costs["preclinical"] + costs["phase1"] + costs["phase2"] + costs["phase3"]
-        )
+        )  # Include current phase cost
+    elif phase == "registration":
+        cumulative_costs += (
+            costs["preclinical"]
+            + costs["phase1"]
+            + costs["phase2"]
+            + costs["phase3"]
+            + costs["registration"]
+        )  # Include current phase cost
 
     return npv_adjusted - cumulative_costs
 
@@ -207,23 +216,26 @@ def calculate_strategic_decision(current_phase, out_license_percentage):
     # Calculate value of continuing development
     next_phase_value = calculate_phase_value(next_phase)
 
-    # Calculate the costs to get to the next phase
-    next_phase_cost = st.session_state.inputs["costs"][current_phase]
-
     # Calculate the probability of successfully progressing to the next phase
     probability_next_phase = (
         st.session_state.inputs["probabilities"][current_phase] / 100
     )
 
-    # Expected value = (Success probability × Next phase value) - Cost to next phase
-    expected_continue_value = (
-        probability_next_phase * next_phase_value
-    ) - next_phase_cost
+    # Calculate the costs to complete the current phase
+    current_phase_cost = st.session_state.inputs["costs"][current_phase]
 
-    # Determine recommendation
-    value_difference = (
-        expected_continue_value - current_phase_value
-    )  # Compare with current phase value
+    # For the expected value, we need:
+    # 1. The full value at the next phase if successful
+    # 2. Multiplied by the probability of success
+    # 3. No need to subtract costs again as they're already included in next_phase_value calculation
+    expected_continue_value = probability_next_phase * next_phase_value
+
+    # Adjust for the cost to move from current phase to next phase
+    # Note: Since next_phase_value already includes all costs through next phase,
+    # we need to make sure we only count the incremental cost
+
+    # Determine recommendation by comparing risk-adjusted next phase value with current value
+    value_difference = expected_continue_value - current_phase_value
     if value_difference > 0:
         recommendation = "Continue Development"
     else:
@@ -239,6 +251,7 @@ def calculate_strategic_decision(current_phase, out_license_percentage):
         "value_difference": abs(value_difference),
         "probability_next_phase": probability_next_phase * 100,
         "out_license_percentage": out_license_percentage,
+        "current_phase_cost": current_phase_cost,
     }
 
 
@@ -489,18 +502,25 @@ with st.container():
         # Calculate costs for this phase
         cumulative_costs = 0
         if st.session_state.inputs["includeRDCosts"]:
-            if phase == "phase1":
+            if phase == "preclinical":
                 cumulative_costs = st.session_state.inputs["costs"]["preclinical"]
+            elif phase == "phase1":
+                cumulative_costs = (
+                    st.session_state.inputs["costs"]["preclinical"]
+                    + st.session_state.inputs["costs"]["phase1"]
+                )
             elif phase == "phase2":
                 cumulative_costs = (
                     st.session_state.inputs["costs"]["preclinical"]
                     + st.session_state.inputs["costs"]["phase1"]
+                    + st.session_state.inputs["costs"]["phase2"]
                 )
             elif phase == "phase3":
                 cumulative_costs = (
                     st.session_state.inputs["costs"]["preclinical"]
                     + st.session_state.inputs["costs"]["phase1"]
                     + st.session_state.inputs["costs"]["phase2"]
+                    + st.session_state.inputs["costs"]["phase3"]
                 )
             elif phase == "registration":
                 cumulative_costs = (
@@ -508,6 +528,7 @@ with st.container():
                     + st.session_state.inputs["costs"]["phase1"]
                     + st.session_state.inputs["costs"]["phase2"]
                     + st.session_state.inputs["costs"]["phase3"]
+                    + st.session_state.inputs["costs"]["registration"]
                 )
 
         with result_cols[i]:
@@ -544,7 +565,7 @@ with st.container():
                     <div><strong>Base Value:</strong> ${base_value:.1f}M</div>
                     <div><strong>Probability:</strong> {(probability * 100):.2f}%</div>
                     <div><strong>Time Factor:</strong> {(1/discount_factor):.3f}</div>
-                    {f"<div><strong>Costs to date:</strong> ${cumulative_costs}M</div>" if st.session_state.inputs['includeRDCosts'] else ""}
+                    {f"<div><strong>Costs through this phase:</strong> ${cumulative_costs}M</div>" if st.session_state.inputs['includeRDCosts'] else ""}
                     <div style="background-color: #fff; padding: 5px; border-radius: 4px; margin-top: 5px;">
                         ${base_value:.1f}M × {(probability * 100):.1f}% ÷ {discount_factor:.2f} 
                         {f" - ${cumulative_costs}M" if st.session_state.inputs['includeRDCosts'] else ""} = 
@@ -807,13 +828,13 @@ with col2:
             f"**Value if Successful:** ${calculate_phase_value(decision_data['next_phase']):.1f}M"
         )
         st.markdown(
-            f"**Cost to Complete Current Phase:** ${st.session_state.inputs['costs'][strategic_stage]:.1f}M"
-        )
-        st.markdown(
             f"**Probability of Success:** {decision_data['probability_next_phase']:.1f}%"
         )
         st.markdown(
             f"**Risk-Adjusted Expected Value:** ${decision_data['continue_develop_value']:.1f}M"
+        )
+        st.markdown(
+            f"**Note:** Values already include all R&D costs through each phase"
         )
     else:
         st.subheader("Option 2: Continue Development")
@@ -891,11 +912,12 @@ Total Value = ${decision_data['deal_now_value']:.1f}M
             st.code(
                 f"""
 Next Phase Value if Successful = ${calculate_phase_value(decision_data['next_phase']):.1f}M
-Cost to Complete {stage_options[strategic_stage]} = ${st.session_state.inputs['costs'][strategic_stage]:.1f}M
 Success Probability = {decision_data['probability_next_phase']:.1f}%
-            
-Expected Value = (Success Probability × Next Phase Value) - Development Cost
-Expected Value = ({decision_data['probability_next_phase']:.1f}% × ${calculate_phase_value(decision_data['next_phase']):.1f}M) - ${st.session_state.inputs['costs'][strategic_stage]:.1f}M = ${decision_data['continue_develop_value']:.1f}M
+
+Expected Value = Success Probability × Next Phase Value
+Expected Value = {decision_data['probability_next_phase']:.1f}% × ${calculate_phase_value(decision_data['next_phase']):.1f}M = ${decision_data['continue_develop_value']:.1f}M
+
+Note: Both current and next phase values already include all R&D costs through each respective phase.
             """
             )
 
