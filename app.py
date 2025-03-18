@@ -167,6 +167,70 @@ def calculate_required_deal_value(percentage):
     return (phase_value * percentage) / 100
 
 
+# Function to calculate strategic decision between continuing development vs out-licensing
+def calculate_strategic_decision(current_phase):
+    # Get all phases and find the next phase
+    phases = ["preclinical", "phase1", "phase2", "phase3", "registration"]
+    if current_phase == "registration":
+        next_phase = None  # No next phase after registration
+    else:
+        next_phase_index = phases.index(current_phase) + 1
+        next_phase = phases[next_phase_index]
+
+    # Calculate current deal option
+    phase_value = calculate_phase_value(current_phase)
+    deal_value = calculate_required_deal_value(st.session_state.inputs["desiredShare"])
+    company_share_percentage = 100 - st.session_state.inputs["desiredShare"]
+    retained_value = (phase_value * company_share_percentage) / 100
+
+    total_deal_value = deal_value + retained_value
+
+    # If there's no next phase, only the current deal is possible
+    if next_phase is None:
+        return {
+            "current_phase": current_phase,
+            "next_phase": None,
+            "deal_now_value": total_deal_value,
+            "continue_develop_value": 0,
+            "recommendation": "Deal Now",
+            "value_difference": total_deal_value,
+            "probability_next_phase": 0,
+        }
+
+    # Calculate value of continuing development
+    next_phase_value = calculate_phase_value(next_phase)
+
+    # Calculate the costs to get to the next phase
+    next_phase_cost = st.session_state.inputs["costs"][current_phase]
+
+    # Calculate the probability of successfully progressing to the next phase
+    probability_next_phase = (
+        st.session_state.inputs["probabilities"][current_phase] / 100
+    )
+
+    # Expected value = (Success probability × Next phase value) - Cost to next phase
+    expected_continue_value = (
+        probability_next_phase * next_phase_value
+    ) - next_phase_cost
+
+    # Determine recommendation
+    value_difference = expected_continue_value - total_deal_value
+    if value_difference > 0:
+        recommendation = "Continue Development"
+    else:
+        recommendation = "Deal Now"
+
+    return {
+        "current_phase": current_phase,
+        "next_phase": next_phase,
+        "deal_now_value": total_deal_value,
+        "continue_develop_value": expected_continue_value,
+        "recommendation": recommendation,
+        "value_difference": abs(value_difference),
+        "probability_next_phase": probability_next_phase * 100,
+    }
+
+
 # Main container
 with st.container():
     # Toggle buttons for assumptions and formulas
@@ -618,6 +682,181 @@ with st.container():
     )
 
     st.plotly_chart(fig, use_container_width=True)
+
+# Strategic Decision Making Section
+st.markdown("---")
+st.header("Strategic Decision Making")
+st.markdown(
+    "Should you continue development or out-license your asset at the current stage?"
+)
+
+# Add a selection for the current phase for the strategic analysis
+strategic_col1, strategic_col2 = st.columns([1, 3])
+
+with strategic_col1:
+    stage_options = {
+        "preclinical": "Preclinical",
+        "phase1": "Phase 1",
+        "phase2": "Phase 2",
+        "phase3": "Phase 3",
+        "registration": "Registration",
+    }
+
+    strategic_stage = st.selectbox(
+        "Current Development Stage",
+        options=list(stage_options.keys()),
+        format_func=lambda x: stage_options[x],
+        index=list(stage_options.keys()).index(st.session_state.inputs["dealStage"]),
+        key="strategic_stage",
+    )
+
+# Calculate the strategic decision
+decision_data = calculate_strategic_decision(strategic_stage)
+
+# Display the strategic analysis
+with strategic_col2:
+    col1, col2 = st.columns(2)
+
+    with col1:
+        st.subheader("Option 1: Out-License Now")
+        st.markdown(
+            f"**Deal Value:** ${calculate_required_deal_value(st.session_state.inputs['desiredShare']):.1f}M"
+        )
+        st.markdown(
+            f"**Retained Value (at {100-st.session_state.inputs['desiredShare']:.1f}% ownership):** ${(calculate_phase_value(strategic_stage) * (100-st.session_state.inputs['desiredShare']) / 100):.1f}M"
+        )
+        st.markdown(
+            f"**Total Expected Value:** ${decision_data['deal_now_value']:.1f}M"
+        )
+
+    with col2:
+        if decision_data["next_phase"]:
+            st.subheader(
+                f"Option 2: Continue to {stage_options[decision_data['next_phase']]}"
+            )
+            st.markdown(
+                f"**Value if Successful:** ${calculate_phase_value(decision_data['next_phase']):.1f}M"
+            )
+            st.markdown(
+                f"**Cost to Complete Current Phase:** ${st.session_state.inputs['costs'][strategic_stage]:.1f}M"
+            )
+            st.markdown(
+                f"**Probability of Success:** {decision_data['probability_next_phase']:.1f}%"
+            )
+            st.markdown(
+                f"**Risk-Adjusted Expected Value:** ${decision_data['continue_develop_value']:.1f}M"
+            )
+        else:
+            st.subheader("Option 2: Continue Development")
+            st.markdown("**No further development possible**")
+            st.markdown("**Asset is at registration stage**")
+
+# Display the recommendation with visualization
+st.subheader("Decision Recommendation")
+
+# Create recommendation card
+recommendation_color = (
+    "#28a745"
+    if decision_data["recommendation"] == "Continue Development"
+    else "#17a2b8"
+)
+value_diff = decision_data["value_difference"]
+
+recommendation_html = f"""
+<div style="padding: 20px; border-radius: 5px; background-color: {recommendation_color}; color: white; margin-bottom: 20px;">
+    <h3 style="margin: 0;">Recommendation: {decision_data['recommendation']}</h3>
+    <p style="margin: 10px 0 0 0; font-size: 1.1rem;">
+        {decision_data['recommendation']} is expected to generate <strong>${value_diff:.1f}M more value</strong>
+    </p>
+</div>
+"""
+st.markdown(recommendation_html, unsafe_allow_html=True)
+
+# Create comparison bar chart
+if decision_data["next_phase"]:
+    comparison_data = pd.DataFrame(
+        {
+            "Option": ["Out-License Now", "Continue Development"],
+            "Expected Value ($M)": [
+                decision_data["deal_now_value"],
+                decision_data["continue_develop_value"],
+            ],
+        }
+    )
+
+    fig = go.Figure(
+        data=[
+            go.Bar(
+                x=comparison_data["Option"],
+                y=comparison_data["Expected Value ($M)"],
+                marker_color=["#17a2b8", "#28a745"],
+                text=[f"${v:.1f}M" for v in comparison_data["Expected Value ($M)"]],
+                textposition="auto",
+            )
+        ]
+    )
+
+    fig.update_layout(
+        title="Expected Value Comparison",
+        height=400,
+        yaxis_title="Expected Value ($M)",
+        xaxis_title=None,
+    )
+
+    st.plotly_chart(fig)
+
+    # Display calculations if formulas are shown
+    if st.session_state.show_formulas:
+        with st.expander("How these calculations work", expanded=True):
+            st.markdown("### Out-License Calculation")
+            st.code(
+                f"""
+Deal Value = ${calculate_required_deal_value(st.session_state.inputs['desiredShare']):.1f}M
+Retained Value = ${(calculate_phase_value(strategic_stage) * (100-st.session_state.inputs['desiredShare']) / 100):.1f}M (retained {100-st.session_state.inputs['desiredShare']}% ownership)
+Total Deal Value = ${decision_data['deal_now_value']:.1f}M
+            """
+            )
+
+            st.markdown("### Continue Development Calculation")
+            st.code(
+                f"""
+Next Phase Value if Successful = ${calculate_phase_value(decision_data['next_phase']):.1f}M
+Cost to Complete {stage_options[strategic_stage]} = ${st.session_state.inputs['costs'][strategic_stage]:.1f}M
+Success Probability = {decision_data['probability_next_phase']:.1f}%
+            
+Expected Value = (Success Probability × Next Phase Value) - Development Cost
+Expected Value = ({decision_data['probability_next_phase']:.1f}% × ${calculate_phase_value(decision_data['next_phase']):.1f}M) - ${st.session_state.inputs['costs'][strategic_stage]:.1f}M = ${decision_data['continue_develop_value']:.1f}M
+            """
+            )
+
+    # Additional factors to consider
+    with st.expander("Additional Factors to Consider", expanded=True):
+        st.markdown(
+            """
+        ### Beyond the Numbers
+
+        While the financial calculation provides a recommendation, consider these additional factors:
+        
+        #### Continue Development Factors:
+        - **Strategic Control**: Maintaining full control of asset development
+        - **Higher Upside**: Potential for significantly higher returns if successful
+        - **Pipeline Value**: Building internal capabilities and expertise
+        - **Future Partnering**: Possibility of better deal terms at a later stage
+        
+        #### Out-License Factors:
+        - **Risk Mitigation**: Transfer development risk to partner
+        - **Immediate Returns**: Secure upfront payment and near-term cashflow
+        - **Resource Allocation**: Free up resources for other projects
+        - **Partner Expertise**: Leverage partner's development and commercial capabilities
+        
+        #### Other Considerations:
+        - Company cash position and funding needs
+        - Internal development capabilities
+        - Portfolio diversification strategy
+        - Market competitive landscape changes
+        - Patent life remaining
+        """
+        )
 
 # Footer
 st.markdown("---")
