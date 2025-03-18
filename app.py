@@ -168,7 +168,7 @@ def calculate_required_deal_value(percentage):
 
 
 # Function to calculate strategic decision between continuing development vs out-licensing
-def calculate_strategic_decision(current_phase):
+def calculate_strategic_decision(current_phase, out_license_percentage):
     # Get all phases and find the next phase
     phases = ["preclinical", "phase1", "phase2", "phase3", "registration"]
     if current_phase == "registration":
@@ -177,13 +177,19 @@ def calculate_strategic_decision(current_phase):
         next_phase_index = phases.index(current_phase) + 1
         next_phase = phases[next_phase_index]
 
-    # Calculate current deal option
-    phase_value = calculate_phase_value(current_phase)
-    deal_value = calculate_required_deal_value(st.session_state.inputs["desiredShare"])
-    company_share_percentage = 100 - st.session_state.inputs["desiredShare"]
-    retained_value = (phase_value * company_share_percentage) / 100
+    # Calculate current phase value
+    current_phase_value = calculate_phase_value(current_phase)
 
-    total_deal_value = deal_value + retained_value
+    # Calculate out-license option based on the current phase value
+    # Deal value is the portion sold at the out-license percentage
+    deal_value = (current_phase_value * out_license_percentage) / 100
+    # Retained value is the remaining portion
+    company_share_percentage = 100 - out_license_percentage
+    retained_value = (current_phase_value * company_share_percentage) / 100
+
+    total_deal_value = (
+        deal_value + retained_value
+    )  # This equals the current phase value
 
     # If there's no next phase, only the current deal is possible
     if next_phase is None:
@@ -195,6 +201,7 @@ def calculate_strategic_decision(current_phase):
             "recommendation": "Deal Now",
             "value_difference": total_deal_value,
             "probability_next_phase": 0,
+            "out_license_percentage": out_license_percentage,
         }
 
     # Calculate value of continuing development
@@ -214,7 +221,9 @@ def calculate_strategic_decision(current_phase):
     ) - next_phase_cost
 
     # Determine recommendation
-    value_difference = expected_continue_value - total_deal_value
+    value_difference = (
+        expected_continue_value - current_phase_value
+    )  # Compare with current phase value
     if value_difference > 0:
         recommendation = "Continue Development"
     else:
@@ -223,11 +232,13 @@ def calculate_strategic_decision(current_phase):
     return {
         "current_phase": current_phase,
         "next_phase": next_phase,
-        "deal_now_value": total_deal_value,
+        "current_phase_value": current_phase_value,
+        "deal_now_value": current_phase_value,  # This is the full asset value now
         "continue_develop_value": expected_continue_value,
         "recommendation": recommendation,
         "value_difference": abs(value_difference),
         "probability_next_phase": probability_next_phase * 100,
+        "out_license_percentage": out_license_percentage,
     }
 
 
@@ -690,8 +701,8 @@ st.markdown(
     "Should you continue development or out-license your asset at the current stage?"
 )
 
-# Add a selection for the current phase for the strategic analysis
-strategic_col1, strategic_col2 = st.columns([1, 3])
+# Add selections for the strategic analysis
+strategic_col1, strategic_col2 = st.columns([1, 1])
 
 with strategic_col1:
     stage_options = {
@@ -710,46 +721,104 @@ with strategic_col1:
         key="strategic_stage",
     )
 
-# Calculate the strategic decision
-decision_data = calculate_strategic_decision(strategic_stage)
-
-# Display the strategic analysis
 with strategic_col2:
-    col1, col2 = st.columns(2)
+    out_license_percentage = st.slider(
+        "Out-License Percentage (%)",
+        min_value=0,
+        max_value=100,
+        value=50,
+        step=5,
+        key="strategic_license_percentage",
+    )
 
-    with col1:
-        st.subheader("Option 1: Out-License Now")
-        st.markdown(
-            f"**Deal Value:** ${calculate_required_deal_value(st.session_state.inputs['desiredShare']):.1f}M"
+# Calculate the strategic decision
+decision_data = calculate_strategic_decision(strategic_stage, out_license_percentage)
+
+# Display the phase values and strategic analysis
+st.subheader("Asset Value Analysis")
+
+# Show current phase value
+current_phase_value = calculate_phase_value(strategic_stage)
+value_at_next_phase = (
+    calculate_phase_value(decision_data["next_phase"])
+    if decision_data["next_phase"]
+    else 0
+)
+
+value_cols = st.columns(3)
+with value_cols[0]:
+    st.metric(
+        label=f"Asset Value at {stage_options[strategic_stage]}",
+        value=f"${current_phase_value:.1f}M",
+    )
+
+with value_cols[1]:
+    if decision_data["next_phase"]:
+        st.metric(
+            label=f"Asset Value at {stage_options[decision_data['next_phase']]}",
+            value=f"${value_at_next_phase:.1f}M",
+            delta=f"{(value_at_next_phase - current_phase_value):.1f}M",
         )
-        st.markdown(
-            f"**Retained Value (at {100-st.session_state.inputs['desiredShare']:.1f}% ownership):** ${(calculate_phase_value(strategic_stage) * (100-st.session_state.inputs['desiredShare']) / 100):.1f}M"
-        )
-        st.markdown(
-            f"**Total Expected Value:** ${decision_data['deal_now_value']:.1f}M"
+    else:
+        st.metric(
+            label="Next Phase",
+            value="N/A (Registration)",
         )
 
-    with col2:
-        if decision_data["next_phase"]:
-            st.subheader(
-                f"Option 2: Continue to {stage_options[decision_data['next_phase']]}"
-            )
-            st.markdown(
-                f"**Value if Successful:** ${calculate_phase_value(decision_data['next_phase']):.1f}M"
-            )
-            st.markdown(
-                f"**Cost to Complete Current Phase:** ${st.session_state.inputs['costs'][strategic_stage]:.1f}M"
-            )
-            st.markdown(
-                f"**Probability of Success:** {decision_data['probability_next_phase']:.1f}%"
-            )
-            st.markdown(
-                f"**Risk-Adjusted Expected Value:** ${decision_data['continue_develop_value']:.1f}M"
-            )
-        else:
-            st.subheader("Option 2: Continue Development")
-            st.markdown("**No further development possible**")
-            st.markdown("**Asset is at registration stage**")
+with value_cols[2]:
+    if decision_data["next_phase"]:
+        prob = decision_data["probability_next_phase"]
+        st.metric(
+            label=f"Probability of Advancing",
+            value=f"{prob:.1f}%",
+        )
+
+        cost = st.session_state.inputs["costs"][strategic_stage]
+        st.markdown(f"**Cost to Complete Phase:** ${cost:.1f}M")
+
+# Display the strategic options
+col1, col2 = st.columns(2)
+
+with col1:
+    st.subheader("Option 1: Out-License Now")
+    st.markdown(
+        f"**Current Asset Value:** ${decision_data['current_phase_value']:.1f}M"
+    )
+    # Calculate values based on license percentage
+    license_value = (
+        decision_data["current_phase_value"] * decision_data["out_license_percentage"]
+    ) / 100
+    retained_value = decision_data["current_phase_value"] - license_value
+
+    st.markdown(
+        f"**Out-License {decision_data['out_license_percentage']}% for:** ${license_value:.1f}M"
+    )
+    st.markdown(
+        f"**Retain {100-decision_data['out_license_percentage']}% worth:** ${retained_value:.1f}M"
+    )
+    st.markdown(f"**Total Value:** ${decision_data['deal_now_value']:.1f}M")
+
+with col2:
+    if decision_data["next_phase"]:
+        st.subheader(
+            f"Option 2: Continue to {stage_options[decision_data['next_phase']]}"
+        )
+        st.markdown(
+            f"**Value if Successful:** ${calculate_phase_value(decision_data['next_phase']):.1f}M"
+        )
+        st.markdown(
+            f"**Cost to Complete Current Phase:** ${st.session_state.inputs['costs'][strategic_stage]:.1f}M"
+        )
+        st.markdown(
+            f"**Probability of Success:** {decision_data['probability_next_phase']:.1f}%"
+        )
+        st.markdown(
+            f"**Risk-Adjusted Expected Value:** ${decision_data['continue_develop_value']:.1f}M"
+        )
+    else:
+        st.subheader("Option 2: Continue Development")
+        st.markdown("**No further development possible**")
+        st.markdown("**Asset is at registration stage**")
 
 # Display the recommendation with visualization
 st.subheader("Decision Recommendation")
@@ -811,9 +880,10 @@ if decision_data["next_phase"]:
             st.markdown("### Out-License Calculation")
             st.code(
                 f"""
-Deal Value = ${calculate_required_deal_value(st.session_state.inputs['desiredShare']):.1f}M
-Retained Value = ${(calculate_phase_value(strategic_stage) * (100-st.session_state.inputs['desiredShare']) / 100):.1f}M (retained {100-st.session_state.inputs['desiredShare']}% ownership)
-Total Deal Value = ${decision_data['deal_now_value']:.1f}M
+Current Asset Value at {stage_options[strategic_stage]} = ${decision_data['current_phase_value']:.1f}M
+Out-License {decision_data['out_license_percentage']}% = ${(decision_data['current_phase_value'] * decision_data['out_license_percentage'] / 100):.1f}M
+Retained Value ({100-decision_data['out_license_percentage']}%) = ${(decision_data['current_phase_value'] * (100-decision_data['out_license_percentage']) / 100):.1f}M
+Total Value = ${decision_data['deal_now_value']:.1f}M
             """
             )
 
