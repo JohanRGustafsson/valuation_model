@@ -1,4 +1,4 @@
-# Pharma Asset Valuation Calculator
+# Pharma Business Valuation & Strategy Suite
 
 A Streamlit application for pharmaceutical asset valuation and deal analysis. This application helps calculate the Net Present Value (NPV) of pharmaceutical assets at different clinical development stages and analyze potential deal structures.
 
@@ -11,6 +11,25 @@ A Streamlit application for pharmaceutical asset valuation and deal analysis. Th
 - R&D cost considerations
 - Deal value and ownership analysis
 - Visualization of ownership structure
+
+## Local Development with Conda
+
+For local development, you can use Conda to create an isolated environment:
+
+1. Create a new conda environment:
+   ```
+   conda create -n valuation-model-250319 -c conda-forge streamlit pandas plotly
+   ```
+
+2. Activate the environment:
+   ```
+   conda activate valuation-model-250319
+   ```
+
+3. Verify the installation:
+   ```
+   streamlit --version
+   ```
 
 ## Installation
 
