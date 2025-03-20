@@ -1,43 +1,20 @@
 import streamlit as st
 import plotly.graph_objects as go
-import pandas as pd
+from typing import Dict, List, Tuple, Any
 from utils.calculations import (
     calculate_phase_value,
-    get_cumulative_probability,
-    get_order_multiplier,
+    PhaseInputs,
 )
 from utils.state import get_phase_display_name
 
 
 def display_header():
     """Display the app header with toggles."""
-    st.title("💊 Pharma Asset Valuation")
+    st.title("Pharma Asset Valuation 💊 ")
 
     col1, col2 = st.columns([3, 1])
     with col1:
         st.subheader("Net Present Value (NPV) Calculator")
-    with col2:
-        toggle_col1, toggle_col2 = st.columns(2)
-        with toggle_col1:
-            st.button(
-                "📋 "
-                + (
-                    "Hide Assumptions"
-                    if st.session_state.show_assumptions
-                    else "Show Assumptions"
-                ),
-                on_click=lambda: toggle_state("show_assumptions"),
-            )
-        with toggle_col2:
-            st.button(
-                "📊 "
-                + (
-                    "Hide Formulas"
-                    if st.session_state.show_formulas
-                    else "Show Formulas"
-                ),
-                on_click=lambda: toggle_state("show_formulas"),
-            )
 
 
 def toggle_state(state_key):
@@ -45,38 +22,47 @@ def toggle_state(state_key):
     st.session_state[state_key] = not st.session_state[state_key]
 
 
-def display_phase_card(phase, phase_value, time_to_market, discount_rate):
-    """Display a phase card using native Streamlit components."""
-    display_name = get_phase_display_name(phase)
+def create_metric(label: str, value: Any, help_text: str = None, delta: Any = None):
+    """Create a standardized metric display.
 
-    # Use a container with border styling
-    with st.container():
-        st.markdown(
-            f"""
-        <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; background-color: #f8f9fa;">
-        </div>
-        """,
-            unsafe_allow_html=True,
-        )
-
-        # Use native Streamlit components within
-        st.metric(
-            label=display_name,
-            value=f"${phase_value:.1f}M",
-            help=f"Time to market: {time_to_market} years | NPV at {discount_rate}% discount rate",
-        )
+    Args:
+        label: The metric label
+        value: The metric value
+        help_text: Optional help text
+        delta: Optional delta value
+    """
+    return st.metric(
+        label=label,
+        value=value,
+        help=help_text,
+        delta=delta,
+    )
 
 
 def display_npv_results(inputs):
     """Display NPV results for all phases using native Streamlit components."""
     st.subheader("The Final NPV by Development Stage")
 
+    # Convert dictionary to PhaseInputs dataclass
+    phase_inputs = PhaseInputs(
+        launchValue=inputs["launchValue"],
+        orderOfEntry=inputs["orderOfEntry"],
+        discountRate=inputs["discountRate"],
+        timeToMarket=inputs["timeToMarket"],
+        costs=inputs["costs"],
+        probabilities=inputs["probabilities"],
+        includeRDCosts=inputs["includeRDCosts"],
+        dealStage=inputs["dealStage"],
+        dealValue=inputs["dealValue"],
+        desiredShare=inputs["desiredShare"],
+    )
+
     # Prepare data for all phases
     phases = ["preclinical", "phase1", "phase2", "phase3", "registration"]
     results_data = []
 
     for phase in phases:
-        phase_value = calculate_phase_value(inputs, phase)
+        phase_result = calculate_phase_value(phase_inputs, phase)
         time_to_market = inputs["timeToMarket"][phase]
         discount_rate = inputs["discountRate"]
         display_name = get_phase_display_name(phase)
@@ -84,45 +70,52 @@ def display_npv_results(inputs):
         results_data.append(
             {
                 "Phase": display_name,
-                "NPV ($M)": phase_value,
-                "Time to Market (years)": time_to_market,
+                "NPV": phase_result.value,  # Get value from PhaseValueResult
+                "Time": time_to_market,
+                "Probability": phase_result.probability,
+                "Costs": phase_result.costs,
             }
         )
-
-    # Create a DataFrame
-    results_df = pd.DataFrame(results_data)
 
     # Use columns to display each phase
     cols = st.columns(len(phases))
     for i, (col, data) in enumerate(zip(cols, results_data)):
         with col:
-            st.metric(
+            create_metric(
                 label=data["Phase"],
-                value=f"${data['NPV ($M)']:.1f}M",
+                value=f"${data['NPV']:.1f}M",
             )
-            st.caption(f"Time to market: {data['Time to Market (years)']} years")
+            st.caption(f"Time to market: {data['Time']} years")
 
-            if st.session_state.show_formulas:
-                phase = phases[i]
-                base_value = inputs["launchValue"] * get_order_multiplier(
-                    inputs, inputs["orderOfEntry"]
-                )
-                probability = get_cumulative_probability(inputs, phase)
-                discount_factor = (1 + (inputs["discountRate"] / 100)) ** inputs[
-                    "timeToMarket"
-                ][phase]
-
-                st.write("---")
-                st.write("**Details:**")
-                st.write(f"Base: ${base_value:.1f}M")
-                st.write(f"Prob: {(probability * 100):.1f}%")
-                st.write(f"Time: {(1/discount_factor):.3f}")
-
+            # Always show an expander with details
+            with st.expander("Details", expanded=False):
+                st.markdown(f"**NPV:** ${data['NPV']:.1f}M")
+                st.markdown(f"**Probability:** {data['Probability']:.1f}%")
+                st.markdown(f"**Time:** {data['Time']:.1f} years")
                 if inputs["includeRDCosts"]:
-                    cumulative_costs = 0
-                    for j in range(i + 1):
-                        cumulative_costs += inputs["costs"][phases[j]]
-                    st.write(f"Costs: ${cumulative_costs:.1f}M")
+                    st.markdown(f"**Costs:** ${data['Costs']:.1f}M")
+
+
+def create_card(title: str, content_function, *args, **kwargs):
+    """Create a card-like container with consistent styling.
+
+    Args:
+        title: Card title
+        content_function: Function to call to fill card content
+        *args, **kwargs: Arguments to pass to content function
+    """
+    with st.container():
+        st.markdown(f"#### {title}")
+        with st.container():
+            st.markdown(
+                """
+                <div style="padding: 10px; border: 1px solid #ddd; border-radius: 5px; 
+                     background-color: #f8f9fa;">
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+            content_function(*args, **kwargs)
 
 
 def create_pie_chart(data):
@@ -180,12 +173,87 @@ def display_recommendation(recommendation, value_diff):
         )
     else:
         st.info(
-            f"**Recommendation: {recommendation}**\n\n{recommendation} is expected to generate **${value_diff:.1f}M more value**"
+            f"**Recommendation: {recommendation}**\n\n{recommendation} is expected to generate **${abs(value_diff):.1f}M more value**"
         )
 
 
-def display_formula_expander(title, formula, explanation):
-    """Display a formula with explanation in an expander."""
-    with st.expander(title, expanded=False):
+def display_formula_expander(title, formula, explanation, use_container=False):
+    """Display a formula with explanation in an expander or container.
+
+    Args:
+        title: Title of the formula section
+        formula: The formula text to display
+        explanation: Explanation text for the formula
+        use_container: If True, uses a container instead of an expander (for nested contexts)
+    """
+    if use_container:
+        with st.container():
+            st.markdown(f"**{title}**")
+            st.code(formula)
+            st.write(explanation)
+            st.markdown("---")
+    else:
+        with st.expander(title, expanded=False):
+            st.code(formula)
+            st.write(explanation)
+
+
+def create_formula_expander(title, formula, explanation, expanded=False):
+    """Create a consistently styled formula expander.
+
+    Args:
+        title: The formula section title
+        formula: The formula text/code to display
+        explanation: Text explanation of the formula
+        expanded: Whether the expander should be expanded by default
+    """
+    with st.expander(f"📐 Formula: {title}", expanded=expanded):
         st.code(formula)
-        st.write(explanation)
+        st.markdown(explanation)
+
+
+def create_assumption_expander(title, assumptions, expanded=False):
+    """Create a consistently styled assumptions expander.
+
+    Args:
+        title: The assumptions section title
+        assumptions: The assumptions text to display
+        expanded: Whether the expander should be expanded by default
+    """
+    with st.expander(f"🎯 Assumptions: {title}", expanded=expanded):
+        st.markdown(assumptions)
+
+
+def create_formula_and_assumptions_expander(
+    title, formula, formula_explanation, assumptions, expanded=False
+):
+    """Create an expander that displays both formulas and related assumptions.
+
+    Args:
+        title: The section title
+        formula: The formula text/code to display
+        formula_explanation: Text explanation of the formula
+        assumptions: The assumptions text to display
+        expanded: Whether the expander should be expanded by default
+    """
+    with st.expander(f"📐 {title}", expanded=expanded):
+        st.subheader("Formula")
+        st.code(body=formula, language=None)
+        st.markdown(formula_explanation)
+
+        st.markdown("---")
+
+        st.subheader("Assumptions")
+        st.markdown(assumptions)
+
+
+def create_multi_metric_row(metrics: List[Tuple[str, Any, str, Any]]):
+    """Create a row of metrics with consistent styling.
+
+    Args:
+        metrics: List of tuples containing (label, value, help_text, delta)
+    """
+    cols = st.columns(len(metrics))
+    for i, (label, value, help_text, delta) in enumerate(metrics):
+        with cols[i]:
+            create_metric(label, value, help_text, delta)
