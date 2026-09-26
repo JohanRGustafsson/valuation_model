@@ -12,36 +12,16 @@ A Streamlit application for pharmaceutical asset valuation and deal analysis. Th
 - Deal value and ownership analysis
 - Visualization of ownership structure
 
-## Local Development with Conda
-
-For local development, you can use Conda to create an isolated environment:
-
-1. Create a new conda environment:
-   ```
-   conda create -n valuation-model-250319 -c conda-forge streamlit pandas plotly
-   ```
-
-2. Activate the environment:
-   ```
-   conda activate valuation-model-250319
-   ```
-
-3. Verify the installation:
-   ```
-   streamlit --version
-   ```
-
 ## Installation
 
-1. Clone this repository
-2. Install the required dependencies:
+1. Install [uv](https://docs.astral.sh/uv/).
+2. Clone this repository.
+3. In the repository folder, run the app:
    ```
-   pip install -r requirements.txt
+   uv run --with-requirements requirements.txt streamlit run app.py
    ```
-3. Run the application:
-   ```
-   streamlit run app.py
-   ```
+
+uv installs the packages in `requirements.txt` on the first run.
 
 ## Usage
 
